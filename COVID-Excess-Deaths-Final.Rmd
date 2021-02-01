@@ -1,0 +1,1776 @@
+---
+title: "COVID-Excess-Deaths"
+author: "Yasser"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: united
+    #highlight: tango
+    #toc: true
+    #toc_float:
+    #  collapsed: false
+    code_folding: hide
+    keep_md: true
+---
+
+# R and Reactable
+
+The following report analyses COVID data developed and published by The Economist, In particular, their analysis focuses on COVID excess deaths. Here, I have begun by replicating some work published on Medium's 'Towards Data Science' publication, and further explored the use of the package `reactable` to produce tables likes those seen in The Economist publication. There is also some use of `ggplot2`.
+
+The original Economist article can be found here:
+
+https://www.economist.com/graphic-detail/2020/07/15/tracking-covid-19-excess-deaths-across-countries
+
+And the backing data/code used in their article can be found here:
+
+https://github.com/TheEconomist/covid-19-excess-deaths-tracker
+
+Initially, the work below is just a duplication of the following article, which i then build on using `ggplot2` and some additional work with `reactable`. You can find the original work here:
+
+https://towardsdatascience.com/recreate-publication-quality-interactive-tables-in-r-using-reactable-187407bc9702
+
+And the backing Github: https://github.com/connorrothschild/economist-table-replication/blob/master/economist-table-replication.Rmd
+
+
+## Initial Setup
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE, warning = FALSE)
+
+
+setwd("C:/Users/MushtaqY/Documents/R/The-Economist-COVID")
+
+
+extrafont::loadfonts(device="win")
+
+
+getwd()
+
+
+```
+
+
+The following work attempts to replicate the table below, previously featured in *The Economist* publication. This will be done with the `reactable` package.
+
+This package allows the building of interactive tables with R, and offers extensive capabilities to customise, either via R, JavaScript or CSS, as we will see. 
+
+![The Economist](image_copy.png)
+
+
+The work published in Medium used the following packages: `reactable`, `htmltools`, `lubridate` for days and times, `hrbrthemes` for *The Economist's* font, and `tidyverse` for data wrangling.
+
+## Loading packages
+
+```{r}
+library(reactable)
+library(htmltools)
+library(lubridate)
+library(hrbrthemes)
+library(tidyverse)
+library(sparkline)
+```
+
+The data wrangling steps are taken from the original Medium article, see link provided above for more details...
+
+```{r, include=FALSE}
+create_dataframe <- function(country) {
+  ## for URL (below)
+  country <- str_replace(country, " ", "_")
+  
+  ## read in CSV, given country parameter
+  data <- read_csv(
+    paste0(
+      'https://raw.githubusercontent.com/TheEconomist/covid-19-excess-deaths-tracker/master/output-data/excess-deaths/', country, '_excess_deaths.csv'
+    )
+  )
+  
+  ## select relevant columns
+  data <- data %>% 
+    select(
+      country,
+      region,
+      start_date,
+      end_date,
+      population,
+      total_deaths,
+      covid_deaths,
+      expected_deaths,
+      excess_deaths,
+      non_covid_deaths
+    )
+  assign(country, rbind(data), envir = .GlobalEnv)
+} 
+```
+
+
+```{r, include=FALSE}
+country_names <- 
+  read_csv(
+    'https://raw.githubusercontent.com/TheEconomist/covid-19-excess-deaths-tracker/master/source-data/list_of_sources.csv'
+  ) %>% 
+  select(country) %>%
+  distinct() %>%
+  mutate(country = str_to_lower(country)) %>%
+  filter(country != "all") %>%
+  pull()
+```
+
+```{r, include=FALSE}
+## have a look
+country_names
+```
+
+
+```{r, include=FALSE}
+for (country in country_names) {
+  tryCatch({create_dataframe(country)},
+           error = function(e) {
+             return(NULL)
+           })
+}
+```
+
+
+
+```{r, include=FALSE}
+## example
+head(britain)
+```
+
+
+```{r, include=FALSE}
+dfs = sapply(.GlobalEnv, is.data.frame)
+
+data <- do.call(rbind,mget(names(dfs)[dfs]))
+
+data
+
+```
+
+
+
+```{r, include=FALSE}
+good_countries <- 
+  c("Britain",
+    "Spain",
+    "Italy",
+    "France",
+    "Netherlands",
+    "Belgium",
+    "Sweden",
+    "Austria")
+
+good_regions <- c("New York City", "Istanbul", "Jakarta")
+
+data_filtered_countries <- data %>% 
+  filter(country %in% good_countries) %>%
+  filter(country == region)
+  # this last filter removes regions from this dataframe
+  
+```
+
+
+
+```{r, include=FALSE}
+data_filtered_regions <- data %>% 
+  filter(region %in% good_regions) %>%
+  # replace for the sake of the table
+  mutate(country = region)
+  
+```
+
+
+
+```{r, include=FALSE}
+data_filtered <- 
+  rbind(data_filtered_countries, data_filtered_regions)
+```
+
+
+
+
+```{r, include=FALSE}
+data_filtered <-data_filtered %>% 
+  group_by(country) %>% 
+  mutate(csum = cumsum(covid_deaths)) # this aggregates covid_deaths by country, by each time point in a column named csum
+```
+
+
+```{r, include=FALSE}
+data_filtered %>% 
+  select(country, start_date, end_date, covid_deaths, excess_deaths, covid_deaths, csum) %>% 
+  reactable()
+```
+
+
+```{r, include=FALSE}
+data_for_table <- data_filtered %>% 
+  filter(excess_deaths > 0) %>%
+  group_by(country) %>%
+  summarise(
+    excess_deaths = round(sum(excess_deaths)),
+    covid_deaths = round(sum(covid_deaths)),
+    perc = covid_deaths / excess_deaths
+  ) %>% 
+  select(country, covid_deaths, excess_deaths, perc)
+
+reactable(data_for_table, pagination = FALSE)
+```
+
+
+```{r, include=FALSE}
+append_date_suffix <- function(dates) {
+  suff <- case_when(
+    dates %in% c(11, 12, 13) ~ "th",
+    dates %% 10 == 1 ~ 'st',
+    dates %% 10 == 2 ~ 'nd',
+    dates %% 10 == 3 ~ 'rd',
+    TRUE ~ "th"
+  )
+  paste0(dates, suff)
+}
+```
+
+
+
+```{r, include=FALSE}
+# test the function:
+
+append_date_suffix(lubridate::day(britain$start_date))
+```
+
+
+```{r, include=FALSE}
+dates_data <- data_filtered %>% 
+  # only looking at date ranges starting post-50 deaths
+  filter(csum >50) %>%
+  group_by(country) %>%
+  summarise(start_date = min(start_date),
+            end_date = max(end_date)) %>%
+  mutate(
+    clean_start_day = format(start_date, "%d"),
+    clean_start_day = append_date_suffix(as.numeric(clean_start_day)),
+    clean_start_month = format(start_date, "%b"),
+    clean_end_day = format(end_date, "%d"),
+    clean_end_day = append_date_suffix(as.numeric(clean_end_day)),
+    clean_end_month = format(end_date, "%b")
+  ) %>% 
+  mutate(
+    clean_range = paste0(
+      clean_start_month, " ", ## Mar
+      clean_start_day, "-", ## 6-
+      clean_end_month, " ", ## May
+      clean_end_day ## 18
+    )
+  ) %>%
+  select(country, clean_range)
+```
+
+
+
+```{r, include=FALSE}
+reactable(dates_data, pagination = FALSE)
+```
+
+
+```{r, include=FALSE}
+data_for_table <- data_filtered %>% 
+  filter(excess_deaths > 0) %>%
+  group_by(country) %>% 
+  summarise(
+    excess_deaths = round(sum(excess_deaths)),
+    covid_deaths = round(sum(covid_deaths)),
+    perc = covid_deaths / excess_deaths
+  ) %>%
+  left_join(dates_data, by = 'country') %>%
+  select(country, clean_range, covid_deaths, excess_deaths, perc)
+```
+
+
+
+```{r, include=FALSE}
+reactable(data_for_table, pagination = FALSE)
+```
+
+## Creating the table
+
+
+```{r, include=FALSE}
+reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE
+)
+```
+
+
+```{r, include=FALSE}
+
+reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  ######## NEW ########
+  defaultColDef = colDef(
+    ### define header styling
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_tw  # font_es doesn't seem to work
+    ),
+    ### define default column styling
+    style = list(
+      fontFamily = font_tw,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  )
+)
+```
+
+```{r, include=FALSE}
+reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  defaultColDef = colDef(
+    ### define header styling
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_tw  # font_es doesn't seem to work
+    ),
+    ### define default column styling
+    style = list(
+      fontFamily = font_tw,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  ### NEW ###
+  columns = list(
+    country = colDef(
+      name = "Region / Country",
+      style = list(fontFamily = font_tw,
+                   fontWeight = "400")
+    ),
+    perc = colDef(
+      html = TRUE,
+      header = JS("
+      function(colInfo) {
+        return 'COVID-19 as<br>% of total'
+      }"),
+      name = "COVID-19 as % of Total",
+      align = "right",
+      maxWidth = 100,
+      format = colFormat(percent = TRUE, digits = 0),
+      style = list(fontFamily = font_tw),
+      headerStyle = list(
+        fontSize = "11px",
+        lineHeight = "14px",
+        textTransform = "uppercase",
+        color = "#0c0c0c",
+        fontWeight = "500",
+        borderBottom = "2px solid #e9edf0",
+        paddingBottom = "3px",
+        verticalAlign = "bottom",
+        fontFamily = font_tw,
+        textAlign = "right"
+      )
+    ),
+    clean_range = colDef(
+      name = "Time Period",
+      style = list(
+        color = '#3f5661',
+        fontSize = '12px',
+        fontFamily = font_tw
+      )
+    )
+  )
+)
+```
+
+
+```{r, include=FALSE}
+reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  defaultColDef = colDef(
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_es
+    ),
+    style = list(
+      fontFamily = font_es,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  columns = list(
+    country = colDef(
+      name = "Region / Country",
+      style = list(fontFamily = font_es,
+                   fontWeight = "400")
+    ),
+    perc = colDef(
+      html = TRUE,
+      header = JS("
+      function(colInfo) {
+        return 'COVID-19 as<br>% of total'
+      }"),
+      name = "COVID-19 as % of Total",
+      align = "right",
+      maxWidth = 100,
+      format = colFormat(percent = TRUE, digits = 0),
+      style = list(fontFamily =  font_es_bold),
+      headerStyle = list(
+        fontSize = "11px",
+        lineHeight = "14px",
+        textTransform = "uppercase",
+        color = "#0c0c0c",
+        fontWeight = "500",
+        borderBottom = "2px solid #e9edf0",
+        paddingBottom = "3px",
+        verticalAlign = "bottom",
+        fontFamily = font_es,
+        textAlign = "right"
+      )
+    ),
+    clean_range = colDef(
+      name = "Time Period",
+      style = list(
+        color = '#3f5661',
+        fontSize = '12px',
+        fontFamily = font_es
+      )
+    ),
+    ###### NEW ######
+    covid_deaths = colDef(
+      name = "COVID-19 Deaths",
+      cell = function(value) {
+        width <- paste0(value * 100 / max(data_for_table$covid_deaths), "%")
+        value <- format(value, big.mark = ",")
+        value <- format(value, width = 10, justify = "right")
+        bar <- div(
+          class = "bar-chart",
+          style = list(marginRight = "6px"),
+          div(
+            class = "bar",
+            style = list(width = width, backgroundColor = "#F15A3F")
+          )
+        )
+        div(class = "bar-cell", span(class = "number", value), bar)
+      }
+    ),
+    excess_deaths = colDef(
+      name = "Total Excess Deaths",
+      cell = function(value) {
+        width <-
+          paste0(value * 100 / max(data_for_table$excess_deaths), "%")
+        value <- format(value, big.mark = ",")
+        value <- format(value, width = 10, justify = "right")
+        bar <- div(
+          class = "bar-chart",
+          style = list(marginRight = "6px"),
+          div(
+            class = "bar",
+            style = list(width = width, backgroundColor = "#3F5661")
+          )
+        )
+        div(class = "bar-cell", span(class = "number", value), bar)
+      }
+    )
+  )
+)
+```
+
+
+```{css, include=FALSE}
+.bar-cell {
+  display: flex;
+  align-items: center;
+}
+.number {
+  font-size: 13.5px;
+  white-space: pre;
+}
+.bar-chart {
+  flex-grow: 1;
+  margin-left: 6px;
+  height: 22px;
+}
+.bar {
+  height: 100%;
+}
+```
+
+
+
+```{r, include=FALSE}
+covid_deaths = colDef(
+    ### define the name
+    name = "COVID-19 Deaths",
+    ### create a 'cell' function
+    cell = function(value) {
+      ### define the bar width according to the specified value
+      width <- paste0(value * 100 / max(data_for_table$covid_deaths), "%")
+      ### add a comma to the label
+      value <- format(value, big.mark = ",")
+      ### justify and provide padding with width
+      value <- format(value, width = 10, justify = "right")
+      ### create the barchart div
+      bar <- div(
+        ### with a class of 'bar-chart'
+        class = "bar-chart",
+        ### give the bar a margin
+        style = list(marginRight = "6px"),
+        ### create the *actual* bar, with the red economist color
+        div(
+          class = "bar",
+          style = list(width = width, backgroundColor = "#F15A3F")
+        )
+      )
+      ### bring it all together, with the 'value' (number) preceding the bar itself
+      div(class = "bar-cell", span(class = "number", value), bar)
+    }
+  )
+```
+
+
+
+```{r, include=FALSE}
+reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  defaultColDef = colDef(
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_es
+    ),
+    style = list(
+      fontFamily = font_es,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  columns = list(
+    country = colDef(
+      name = "Region / Country",
+      style = list(fontFamily = font_es,
+                   fontWeight = "400")
+    ),
+    perc = colDef(
+      html = TRUE,
+      header = JS("
+      function(colInfo) {
+        return 'COVID-19 as<br>% of total'
+      }"),
+      name = "COVID-19 as % of Total",
+      align = "right",
+      maxWidth = 100,
+      format = colFormat(percent = TRUE, digits = 0),
+      style = list(fontFamily =  font_es_bold),
+      headerStyle = list(
+        fontSize = "11px",
+        lineHeight = "14px",
+        textTransform = "uppercase",
+        color = "#0c0c0c",
+        fontWeight = "500",
+        borderBottom = "2px solid #e9edf0",
+        paddingBottom = "3px",
+        verticalAlign = "bottom",
+        fontFamily = font_es,
+        textAlign = "right"
+      )
+    ),
+    clean_range = colDef(
+      name = "Time Period",
+      style = list(
+        color = '#3f5661',
+        fontSize = '12px',
+        fontFamily = font_es
+      )
+    ),
+    ###### NEW ######
+    covid_deaths = colDef(
+      name = "COVID-19 Deaths",
+      cell = function(value) {
+        width <- paste0(value * 100 / max(data_for_table$covid_deaths), "%")
+        value <- format(value, big.mark = ",")
+        value <- format(value, width = 10, justify = "right")
+        bar <- div(
+          class = "bar-chart",
+          style = list(marginRight = "6px"),
+          div(
+            class = "bar",
+            style = list(width = width, backgroundColor = "#F15A3F")  #"#F15A3F"
+          )
+        )
+        div(class = "bar-cell", span(class = "number", value), bar)
+      }
+    ),
+    excess_deaths = colDef(
+      name = "Total Excess Deaths",
+      cell = function(value) {
+        width <-
+          paste0(value * 100 / max(data_for_table$excess_deaths), "%")
+        value <- format(value, big.mark = ",")
+        value <- format(value, width = 10, justify = "right")
+        bar <- div(
+          class = "bar-chart",
+          style = list(marginRight = "6px"),
+          div(
+            class = "bar",
+            style = list(width = width, backgroundColor = "#3F5661")
+          )
+        )
+        div(class = "bar-cell", span(class = "number", value), bar)
+      }
+    )
+  )
+)
+```
+
+
+```{r, include=FALSE}
+# define bar_chart function first, outside of reactable function call, seems tidier.
+bar_chart <- function(label, width = "100%", height = "16px", fill = "#F15A3F", background = NULL) {
+  bar <- div(style = list(background = fill, width = width, height = height))
+  chart <- div(style = list(flexGrow = 1, marginLeft = "8px", background = background), bar)  
+  div(style = list(display = "flex", alignItems = "center"), label, chart)
+}
+
+
+reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  columns = list(
+    covid_deaths = colDef(
+      name = "COVID-19 Deaths",
+      #align = "left",
+      cell = function(value) {
+      width <- paste0(value / max(data_for_table$covid_deaths) * 100, "%")
+      value <- format(value, big.mark = ",")
+      value <- format(value, width = 10, justify = "right")
+      bar_chart(value, width = width, background = "#e1e1e1")
+      } 
+  ),
+  excess_deaths = colDef(
+      name = "Total Excess Deaths",
+      align = "left",
+      cell = function(value) {
+      width <- paste0(value / max(data_for_table$covid_deaths) * 100, "%")
+      value <- format(value, big.mark = ",")
+      value <- format(value, width = 10, justify = "right")
+      bar_chart(value, width = width, background = "#e1e1e1", fill = "#3F5661")
+      } 
+  )
+)
+)
+
+
+```
+
+The following is the final table produced by a series of customisations to `reactable`. The code is slightly different to that included in the Medium article, given I use a previously created function to produce the bar charts, which don't rely on CSS.
+
+```{r}
+# define bar_chart function first, outside of reactable function call, seems tidier.
+bar_chart <- function(label, width = "100%", height = "16px", fill = "#F15A3F", background = NULL) {
+  bar <- div(style = list(background = fill, width = width, height = height))
+  chart <- div(style = list(flexGrow = 1, marginLeft = "8px", background = background), bar)  
+  div(style = list(display = "flex", alignItems = "center"), label, chart)
+}
+
+
+table_final <- reactable(
+  data_for_table,
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  defaultColDef = colDef(
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_tw
+    ),
+    style = list(
+      fontFamily = font_tw,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  columns = list(
+    country = colDef(
+      name = "Region / Country",
+      style = list(fontFamily = font_tw,
+                   fontWeight = "400")
+    ),
+    perc = colDef(
+      html = TRUE,
+      header = JS("
+      function(colInfo) {
+        return 'COVID-19 as<br>% of total'
+      }"),
+      name = "COVID-19 as % of Total",
+      align = "right",
+      maxWidth = 100,
+      format = colFormat(percent = TRUE, digits = 0),
+      style = list(fontFamily =  font_tw),
+      headerStyle = list(
+        fontSize = "11px",
+        lineHeight = "14px",
+        textTransform = "uppercase",
+        color = "#0c0c0c",
+        fontWeight = "500",
+        borderBottom = "2px solid #e9edf0",
+        paddingBottom = "3px",
+        verticalAlign = "bottom",
+        fontFamily = font_tw,
+        textAlign = "right"
+      )
+    ),
+    clean_range = colDef(
+      name = "Time Period",
+      style = list(
+        color = '#3f5661',
+        fontSize = '12px',
+        fontFamily = font_tw
+      )
+    ),
+    ###### NEW ######
+    covid_deaths = colDef(
+      name = "COVID-19 Deaths",
+      #align = "left",
+      cell = function(value) {
+      width <- paste0(value / max(data_for_table$covid_deaths) * 100, "%")
+      value <- format(value, big.mark = ",")
+      value <- format(value, width = 10, justify = "right")
+      bar_chart(value, width = width, background = "#e1e1e1")
+      } 
+  ),
+  excess_deaths = colDef(
+      name = "Total Excess Deaths",
+      align = "left",
+      cell = function(value) {
+      width <- paste0(value / max(data_for_table$covid_deaths) * 100, "%")
+      value <- format(value, big.mark = ",")
+      value <- format(value, width = 10, justify = "right")
+      bar_chart(value, width = width, background = "#e1e1e1", fill = "#3F5661")
+      }
+    )
+  )
+)
+
+table_final
+```
+
+
+Finally, we can add the table title and subtitle.
+
+Now, we can include a title and subtitle above the table. We use some `htmltools` functions to create divs, headers, and paragraphs.
+
+```{r}
+div(
+    div(
+      h2("Excess mortality since region/country’s first 50 covid deaths"),
+      p(
+        ### create the 'Updated on ...' and make it dynamic
+        paste0(
+          "Updated on ", format(Sys.Date(), "%B "),
+          append_date_suffix(
+            as.numeric(format(Sys.Date(), "%d"))
+            ), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT"
+        )
+      ),
+    ),
+    table_final)
+```
+This is then adjusted using css:
+
+
+```{css}
+.table {
+  margin: 0 auto;
+  width: 675px;
+}
+.tableTitle {
+  margin: 6px 0;
+  font-size: 16px;
+  font-family: 'Econ Sans Cnd'
+}
+.tableTitle h2 {
+  font-size: 16px;
+  font-weight: bold;
+  font-family: 'Econ Sans Cnd'
+}
+.tableTitle p {
+  font-size: 14px;
+  font-weight: 500;
+}
+```
+
+Below is the final table:
+
+```{r}
+div(class = "tableTitle",
+    div(
+      class = "title",
+      h2("Excess mortality since region/country’s first 50 covid deaths"),
+      p(
+        paste0("Updated on ", format(Sys.Date(),"%B "),
+          append_date_suffix(as.numeric(format(Sys.Date(), "%d"))), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT"
+        )
+      ),
+    ),
+    table_final)
+```
+
+
+## Heat map by excess deaths
+
+
+The following produces some heat maps inspired by some of those includes in The Economist publication, but using `ggplot2` alone. The heat maps shows excess deaths by country, region and week, to give an indication of hot spots.
+
+Arrange the data accordingly, first expand on previous country list
+
+```{r}
+
+# selected countries to include:
+
+good_countries_2 <- append(good_countries, c("Mexico", "South Africa", "Switzerland", "Sweden", "Brazil", "Portugal", "United States", "Germany", "Norway", "Denmark"))
+good_countries_2
+
+```
+
+
+```{r}
+data_heat_map <- data %>%
+  select(country, region, start_date, end_date, total_deaths, expected_deaths, excess_deaths) %>%
+  filter(country %in% good_countries_2) %>%
+  group_by(country, start_date, end_date) %>%
+  summarise(
+    total_deaths = sum(total_deaths),
+    expected_deaths = sum(expected_deaths),
+    excess_deaths = total_deaths - expected_deaths,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    dev_from_expected = (total_deaths - expected_deaths) / expected_deaths # calculates the deviation from the expected deaths, %
+  )
+
+data_heat_map
+
+```
+
+```{r, include=FALSE, eval=FALSE}
+ reactable(
+  data_heat_map,
+  defaultColDef = colDef(
+    style = function(value) {
+      if (!is.numeric(value)) return()
+      #normalized <- (value - min(nottem)) / (max(nottem) - min(nottem))
+      color <- viridis::viridis()
+      list(background = color)
+    },
+    format = colFormat(digits = 1),
+    minWidth = 50
+  ),
+  columns = list(
+    .rownames = colDef(name = "start_date", sortable = TRUE, align = "left")
+  ),
+  bordered = TRUE
+)
+```
+
+
+
+### ggplot Heatmap
+
+First one below without applying a theme.
+
+```{r, fig.width=12, fig.height=10}
+# using standard themes
+ggplot(data = data_heat_map, aes(x = start_date, y = country, dev_from_expected, fill = dev_from_expected, width = 7)) +
+  geom_tile(colour = "gray50", linetype = 3) +
+  labs(x = "", y = "", fill = "Deviation from expected deaths",
+       title = "Excess deaths by country",
+       subtitle = paste0("Last updated on: ",format(Sys.Date(),"%B "),
+          append_date_suffix(as.numeric(format(Sys.Date(), "%d"))), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT")) +
+  scale_y_discrete(expand=c(0,0)) +
+  #scale_fill_continuous(labels = scales::percent) +
+  scale_fill_viridis_c(labels = scales::percent, direction = -1) +
+  theme(strip.background = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "top")
+  
+```
+
+We then apply the `theme_ipsum_tw` and drop some of the grid lines, as well as space out the cells. This produces an altogether cleaner output.
+
+```{r, fig.width=12, fig.height=10}
+heat_plot <- ggplot(data = data_heat_map, aes(x = start_date, y = country, dev_from_expected, fill = dev_from_expected, width = 7)) +
+  geom_tile(colour = "gray50", linetype = 3, height=.9) +  # changed from linetype 1
+  labs(x = "", y = "", fill = "Deviation from expected deaths",
+       title = "Excess deaths by country",
+       subtitle = paste0("Last updated on: ",format(Sys.Date(),"%B "),
+          append_date_suffix(as.numeric(format(Sys.Date(), "%d"))), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT")) +
+  scale_y_discrete(expand=c(0,0)) +
+  #scale_fill_continuous(labels = scales::percent) +
+  scale_fill_viridis_c(labels = scales::percent, direction = -1) +
+  theme_ipsum_tw(plot_title_size = 14, subtitle_size = 12) +
+  theme(legend.position = "top",
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+heat_plot
+```
+
+```{r, include=FALSE}
+ggsave(
+  "excess-deaths-country-v2.png",
+  plot = heat_plot,
+  device = NULL,
+  #path = NULL,
+  #scale = 1,
+  width = 10,
+  height = 8,
+  units = "in",
+  dpi = 500,
+  limitsize = TRUE
+)
+```
+
+
+Heat map for UK regions only...
+
+```{r}
+data_heat_map_uk <- data %>%
+  filter(country == "Britain" & !region %in% c("England and Wales","Britain")) %>%
+  select(region, start_date, end_date, total_deaths, expected_deaths, excess_deaths) %>%
+  group_by(region, start_date, end_date) %>%
+  summarise(
+    total_deaths = sum(total_deaths),
+    expected_deaths = sum(expected_deaths),
+    excess_deaths = total_deaths - expected_deaths,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    dev_from_expected = (total_deaths - expected_deaths) / expected_deaths # calculates the deviation from the expected deaths, %
+  )
+
+data_heat_map_uk
+```
+
+UK heat map:
+
+```{r, fig.width=12, fig.height=10}
+heat_plot_uk <- ggplot(data = data_heat_map_uk, aes(x = start_date, y = region, dev_from_expected, fill = dev_from_expected, width = 7)) +
+  geom_tile(colour = "gray50", linetype = 3, height=.9) +  # changed from linetype 1
+  labs(x = "", y = "", fill = "Deviation from expected deaths",
+       title = "Excess deaths by region",
+       subtitle = paste0("Last updated on: ",format(Sys.Date(),"%B "),
+          append_date_suffix(as.numeric(format(Sys.Date(), "%d"))), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT")) +
+  scale_y_discrete(expand=c(0,0)) +
+  #scale_fill_continuous(labels = scales::percent) +
+  scale_fill_viridis_c(labels = scales::percent, direction = -1) +
+  theme_ipsum_tw(plot_title_size = 14, subtitle_size = 12) +
+  theme(legend.position = "top",
+        legend.key.width = unit(1, 'cm'),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank())
+
+heat_plot_uk
+```
+
+```{r, include=FALSE}
+ggsave(
+  "excess-deaths-uk.png",
+  plot = heat_plot_uk,
+  device = NULL,
+  #path = NULL,
+  #scale = 1,
+  width = 10,
+  height = 8,
+  units = "in",
+  dpi = 500,
+  limitsize = TRUE
+)
+```
+
+
+### Including sparklines
+
+The following builds a `reactable` with embedded sparklines showing COVID deaths and excess deaths.
+
+The first step is to build the data from the raw data frame, filtering for the key countries we want and building the data for the sparklines. We also first retrieve the date periods for the countries selected.
+
+```{r}
+dates_data_2 <- data %>% 
+  filter(country %in% good_countries_2 & country == region) %>%
+  # only looking at date ranges starting post-50 deaths
+  group_by(country) %>% 
+  mutate(csum = cumsum(covid_deaths)) %>%
+  ungroup() %>%
+  filter(csum >50) %>%
+  group_by(country) %>%
+  summarise(start_date = min(start_date),
+            end_date = max(end_date)) %>%
+  mutate(
+    clean_start_day = format(start_date, "%d"),
+    clean_start_day = append_date_suffix(as.numeric(clean_start_day)),
+    clean_start_month = format(start_date, "%b"),
+    clean_end_day = format(end_date, "%d"),
+    clean_end_day = append_date_suffix(as.numeric(clean_end_day)),
+    clean_end_month = format(end_date, "%b")
+  ) %>% 
+  mutate(
+    clean_range = paste0(
+      clean_start_month, " ", ## Mar
+      clean_start_day, "-", ## 6-
+      clean_end_month, " ", ## May
+      clean_end_day ## 18
+    )
+  ) %>%
+  select(country, clean_range)
+
+dates_data_2
+```
+
+
+```{r}
+data_spark_holder <- data %>%
+  filter(country %in% good_countries_2 & country == region) %>% # selects list of countries needed and removes region
+  group_by(country) %>%
+  summarise(
+    excess_deaths = round(sum(excess_deaths)),
+    covid_deaths = round(sum(covid_deaths)),
+    perc = covid_deaths / excess_deaths
+  ) %>%
+  left_join(dates_data_2, by = 'country') %>%
+  select(country, clean_range, covid_deaths, excess_deaths, perc) %>%
+  mutate(
+    sparkline_covid = NA,
+    sparkline_excess = NA
+  )
+
+# the following two objects give lists holding the time series data we need for the sparklines.
+excess_spark <- data %>%
+  filter(country %in% good_countries_2 & country == region) %>%
+  group_by(country) %>% 
+  mutate(csum = cumsum(covid_deaths)) %>%
+  ungroup() %>%
+  filter(csum >50) %>% # show excess deaths since COVID deaths > 50
+  select(country, excess_deaths) %>%
+  group_by(country) %>%
+  summarise(excess_deaths = list(excess_deaths))
+
+covid_spark <- data %>%
+  filter(country %in% good_countries_2 & country == region) %>%
+  select(country, covid_deaths) %>%
+  group_by(country) %>%
+  mutate(cumsum_covid = cumsum(covid_deaths)) %>%
+  filter(cumsum_covid > 50) %>%
+  summarise(covid_deaths = list(covid_deaths))
+```
+
+
+An example of css class to add to the `reactable`:
+
+```{css}
+.my-col {
+  border-right: 1px solid rgba(0, 0, 0, 0.05);
+}
+```
+
+
+```{r}
+spark_table_final <- reactable(data_spark_holder, 
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = TRUE,
+  pagination = FALSE,
+  defaultColGroup = colGroup(headerStyle = list(fontFamily = font_tw, color = "#0c0c0c",
+                                                fontWeight = "500",textTransform = "uppercase",
+                                                fontSize = "11px")), # css headerClass = "group-header" # this is quite messy, better to do as css style cheet
+  columnGroups = list(
+    colGroup(name = "Trend", columns = c("sparkline_covid", "sparkline_excess"))
+  ),
+  defaultColDef = colDef(
+    header = function(value) gsub("_", " ", value, fixed = TRUE),
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_tw
+    ),
+    style = list(
+      fontFamily = font_tw,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  columns = list(
+      sparkline_excess = colDef(name = "Excess Deaths", cell = function(value, index) {
+        sparkline(excess_spark$excess_deaths[[index]], width = 100, height = 30)
+  }),
+      sparkline_covid = colDef(name = "COVID Deaths", cell = function(value, index) {
+        sparkline(covid_spark$covid_deaths[[index]], width = 100, height = 30)
+  }),
+      clean_range = colDef(name = "Date Range"),
+      covid_deaths = colDef(format = colFormat(separators = TRUE)),
+      excess_deaths = colDef(format = colFormat(separators = TRUE), class = "my-col"),
+      perc = colDef(format = colFormat(percent = TRUE, digits = 1),
+                    html = TRUE, header = JS("
+          function(colInfo) {
+          return 'COVID-19 as<br>% of total'
+          }"), show = FALSE) # not show this column
+))
+
+spark_table_final
+```
+
+The following adds a title and some additional details.
+
+```{r}
+div(class = "tableTitle",
+    div(
+      class = "title",
+      h2("Excess mortality and COVID deaths"),
+      p("Table showing COVID deaths since country exceeded 50 and excess deaths since beginning of the year"),
+      p(
+        paste0("Updated on ", format(Sys.Date(),"%B "),
+          append_date_suffix(as.numeric(format(Sys.Date(), "%d"))), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT"
+        )
+      ),
+    ),
+    spark_table_final)
+```
+
+
+We want to add some more details into the table, such as rate per 100,000 COVID deaths per country.
+First add population column into the data:
+
+```{r}
+populations <- data %>%
+  filter(country %in% good_countries_2 & country == region) %>% 
+  select(country, population) %>%
+  distinct(country, .keep_all = TRUE)
+
+data_spark_holder_pop <- data_spark_holder %>%
+  left_join(populations, by = 'country') %>%
+  mutate(covid_rate = round((covid_deaths / population) * 100000, 1)) # rate per 100,000 added
+
+data_spark_holder_pop
+
+```
+
+Details added:
+
+```{r}
+spark_table_final_pop <- reactable(data_spark_holder_pop, 
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = FALSE, # amended
+  pagination = FALSE,
+  defaultColGroup = colGroup(headerStyle = list(fontFamily = font_tw, color = "#0c0c0c",
+                                                fontWeight = "500",textTransform = "uppercase",
+                                                fontSize = "11px")), # css headerClass = "group-header" # this is quite messy, better to do as css style sheet
+  columnGroups = list(
+    colGroup(name = "Trend", columns = c("sparkline_covid", "sparkline_excess"))
+  ),
+  defaultColDef = colDef(
+    header = function(value) gsub("_", " ", value, fixed = TRUE),
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_tw
+    ),
+    style = list(
+      fontFamily = font_tw,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  columns = list(
+      sparkline_excess = colDef(name = "Excess Deaths", cell = function(value, index) {
+        sparkline(excess_spark$excess_deaths[[index]], width = 100, height = 30)
+  }),
+      sparkline_covid = colDef(name = "COVID Deaths", cell = function(value, index) {
+        sparkline(covid_spark$covid_deaths[[index]], width = 100, height = 30)
+  }),
+      clean_range = colDef(name = "Date Range"),
+      covid_deaths = colDef(format = colFormat(separators = TRUE)),
+      excess_deaths = colDef(format = colFormat(separators = TRUE), class = "my-col"),
+      perc = colDef(format = colFormat(percent = TRUE, digits = 1),
+                    html = TRUE, header = JS("
+          function(colInfo) {
+          return 'COVID-19 as<br>% of total'
+          }"), show = FALSE) # not show this column
+))
+
+spark_table_final_pop
+
+```
+
+Try to add some custom formatting to the rate cell using CSS (better to use external CSS style sheet, but in this case we will just include it here for visibility/practice).
+
+```{css}
+.cell {
+  /* box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.15); */
+}
+.number {
+  font-family: "Fira Mono", Consolas, Monaco, monospace;
+  font-size: 16px;
+  line-height: 30px;
+  white-space: pre;
+}
+
+.spi-rating {
+  width: 40px;
+  height: 30px;
+  border: 1px solid rgba(0, 0, 0, 0.03); 
+  border-radius: 50%;
+  color: #000;
+  font-size: 13px;
+  /* letter-spacing: -2px; */
+}
+
+```
+
+The CSS above adds the conditionally formatted circles to the rate columns. This was derived from the following example published in the `reactable` documentation:
+
+https://glin.github.io/reactable/articles/womens-world-cup/womens-world-cup.html
+
+```{r}
+
+rate_column <- function(maxWidth = 55, ...) {
+  colDef(maxWidth = maxWidth, align = "center", class = "cell number", ...)
+}
+
+make_color_pal <- function(colors, bias = 1) {
+  get_color <- colorRamp(colors, bias = bias)
+  function(x) rgb(get_color(x), maxColorValue = 255)
+}
+
+rate_color <- make_color_pal(c("#ff2700", "#f8fcf8", "#44ab43"), bias = 0.6)
+
+
+spark_table_final_pop <- reactable(data_spark_holder_pop, 
+  defaultSortOrder = 'desc',
+  defaultSorted = 'excess_deaths',
+  showSortIcon = FALSE,
+  compact = FALSE, # amended
+  pagination = FALSE,
+  defaultColGroup = colGroup(headerStyle = list(fontFamily = font_tw, color = "#0c0c0c",
+                                                fontWeight = "500",textTransform = "uppercase",
+                                                fontSize = "11px")), # css headerClass = "group-header" # this is quite messy, better to do as css style sheet
+  columnGroups = list(
+    colGroup(name = "Trend", columns = c("sparkline_covid", "sparkline_excess"))
+  ),
+  defaultColDef = colDef(
+    header = function(value) gsub("_", " ", value, fixed = TRUE),
+    headerStyle = list(
+      textAlign = "left",
+      fontSize = "11px",
+      lineHeight = "14px",
+      textTransform = "uppercase",
+      color = "#0c0c0c",
+      fontWeight = "500",
+      borderBottom = "2px solid #e9edf0",
+      paddingBottom = "3px",
+      verticalAlign = "bottom",
+      fontFamily = font_tw
+    ),
+    style = list(
+      fontFamily = font_tw,
+      fontSize = "14px",
+      verticalAlign = "center",
+      align = "left"
+    )
+  ),
+  columns = list(
+      sparkline_excess = colDef(name = "Excess Deaths", cell = function(value, index) {
+        sparkline(excess_spark$excess_deaths[[index]], width = 100, height = 30)
+  }),
+      sparkline_covid = colDef(name = "COVID Deaths", cell = function(value, index) {
+        sparkline(covid_spark$covid_deaths[[index]], width = 100, height = 30)
+  }),
+      clean_range = colDef(name = "Date Range"),
+      covid_deaths = colDef(format = colFormat(separators = TRUE)),
+      excess_deaths = colDef(format = colFormat(separators = TRUE), class = "my-col"),
+      perc = colDef(format = colFormat(percent = TRUE, digits = 1),
+                    html = TRUE, header = JS("
+          function(colInfo) {
+          return 'COVID-19 as<br>% of total'
+          }"), show = FALSE), # not show this column
+      covid_rate = rate_column(
+        cell = function(value) {
+          scaled <- 1 - (value - min(data_spark_holder_pop$covid_rate)) / (max(data_spark_holder_pop$covid_rate) - min(data_spark_holder_pop$covid_rate))
+          color <- rate_color(scaled)
+          value <- format(round(value, 1), nsmall = 1)
+          div(class = "spi-rating", style = list(background = color), value)
+        }
+      ),
+      population = colDef(show = FALSE)
+))
+
+spark_table_final_pop
+```
+
+Add title and caption details:
+
+```{r}
+div(class = "tableTitle",
+    div(
+      class = "title",
+      h2("Excess mortality and COVID deaths"),
+      p("Table showing COVID deaths since country exceeded 50 and excess deaths since beginning of the year"),
+      p(
+        paste0("Updated on ", format(Sys.Date(),"%B "),
+          append_date_suffix(as.numeric(format(Sys.Date(), "%d"))), " ",
+          strftime(Sys.time(), format = "%H:%M"), " GMT"
+        )
+      ),
+    ),
+    spark_table_final_pop,
+    p("The COVID rate is the rate of COVID deaths per 100,000 population \nThe 
+      number of COVID deaths is for the period shown only (once country surpassed 50)"))
+```
+
+
+### More reactable work
+
+The following is just some replication of the `reactable` documentation around the basic usage of the package, using the COVID data as an example:
+
+
+#### Basic Usage
+
+```{r}
+reactable(data_for_table)
+```
+Columns can be customized by providing a named list of column definitions created by colDef() to columns
+
+```{r}
+reactable(data_for_table, columns = list(
+  country = colDef(name = "Country"),
+  clean_range = colDef(name = "Date Range"),
+  covid_deaths = colDef(name = "COVID Deaths"),
+  excess_deaths = colDef(name = "Excess Deaths"),
+  perc = colDef(name = "% of Total")
+))
+```
+
+For convenience, you can also specify a default colDef() to use for all columns in defaultColDef:
+
+Tables are sorted in ascending order first by default. To customize the sort order, set defaultSortOrder on a table or column to either "asc" (ascending) or "desc" (descending):
+
+```{r}
+reactable(data_for_table,
+          defaultColDef = colDef(
+            header = function(value) gsub("_", " ", value, fixed = TRUE),
+            cell = function(value) format(value, nsmall = 1),
+            align = "center",
+            minWidth = 70,
+            headerStyle = list(background = "#f7f7f8")
+          ),
+          columns = list(
+            perc = colDef(minWidth = 50, # overrides the default
+                          defaultSortOrder = "desc")
+          ),
+          bordered = TRUE,
+          highlight = TRUE
+          )
+```
+
+You can make columns filterable using filterable.
+To make specific columns filterable (or not), set filterable in the column definition:
+You can make the entire table searchable using searchable:
+You can change the default page size by configuring defaultPageSize
+You can show a dropdown of page sizes for users to choose from using showPageSizeOptions. The page size options can be customized through pageSizeOptions:
+
+```{r}
+reactable(data_for_table,
+          defaultColDef = colDef(
+            header = function(value) gsub("_", " ", value, fixed = TRUE),
+            cell = function(value) format(value, nsmall = 1),
+            align = "center",
+            minWidth = 70,
+            headerStyle = list(background = "#f7f7f8")
+          ),
+          columns = list(
+            perc = colDef(minWidth = 50, # overrides the default
+                          defaultSortOrder = "desc",
+                          filterable = FALSE)
+          ),
+          bordered = TRUE,
+          highlight = TRUE,
+          filterable = TRUE,
+          searchable = TRUE,
+          showPageSizeOptions = TRUE,
+          pageSizeOptions = c(5, 10),
+          defaultPageSize = 5,
+          defaultSorted = "perc"
+          #minRows = 10
+          )
+```
+
+You can use an alternative pagination type by setting paginationType to:
+
+"jump" to show a page jump
+"simple" to show previous/next buttons only
+
+```{r}
+reactable(data_for_table,
+          defaultColDef = colDef(
+            header = function(value) gsub("_", " ", value, fixed = TRUE),
+            cell = function(value) format(value, nsmall = 1),
+            align = "center",
+            minWidth = 70,
+            headerStyle = list(background = "#f7f7f8")
+          ),
+          columns = list(
+            perc = colDef(minWidth = 50, # overrides the default
+                          defaultSortOrder = "desc",
+                          filterable = FALSE)
+          ),
+          bordered = TRUE,
+          highlight = TRUE,
+          filterable = TRUE,
+          searchable = TRUE,
+          paginationType = "jump",
+          #pageSizeOptions = c(5, 10),
+          defaultPageSize = 5,
+          defaultSorted = "perc"
+          #minRows = 10
+          )
+```
+
+Tables are paged by default, but you can disable pagination by setting pagination to FALSE:
+
+```{r}
+reactable(data_for_table,
+          defaultColDef = colDef(
+            header = function(value) gsub("_", " ", value, fixed = TRUE),
+            cell = function(value) format(value, nsmall = 1),
+            align = "center",
+            minWidth = 70,
+            headerStyle = list(background = "#f7f7f8")
+          ),
+          columns = list(
+            perc = colDef(minWidth = 50, # overrides the default
+                          defaultSortOrder = "desc",
+                          filterable = FALSE)
+          ),
+          bordered = TRUE,
+          highlight = TRUE,
+          filterable = TRUE,
+          searchable = TRUE,
+          pagination = FALSE,
+          #paginationType = "jump",
+          #pageSizeOptions = c(5, 10),
+          #defaultPageSize = 5,
+          defaultSorted = "perc"
+          #minRows = 10
+          )
+```
+
+
+You can group rows in a table by specifying one or more columns in groupBy:
+
+When rows are grouped, you can aggregate data in a column using an aggregate function:
+
+```{r}
+data_cars <- MASS::Cars93[14:38, c("Type", "Price", "MPG.city", "DriveTrain", "Man.trans.avail")]
+
+reactable(data_cars, groupBy = "Type", columns = list(
+  Price = colDef(aggregate = "max"),
+  MPG.city = colDef(aggregate = "mean", format = colFormat(digits = 1)),
+  DriveTrain = colDef(aggregate = "unique"),
+  Man.trans.avail = colDef(aggregate = "frequency")
+))
+```
+
+
+```{r, eval=FALSE}
+
+# built in options:
+colDef(aggregate = "sum")        # Sum of numbers
+colDef(aggregate = "mean")       # Mean of numbers
+colDef(aggregate = "max")        # Maximum of numbers
+colDef(aggregate = "min")        # Minimum of numbers
+colDef(aggregate = "median")     # Median of numbers
+colDef(aggregate = "count")      # Count of values
+colDef(aggregate = "unique")     # Comma-separated list of unique values
+colDef(aggregate = "frequency")  # Comma-separated counts of unique values
+
+# Or a custom aggregate function in JavaScript:
+
+colDef(
+  aggregate = JS("
+    function(values, rows) {
+      // input:
+      //  - values: an array of all values in the group
+      //  - rows: an array of row data objects for all rows in the group (optional)
+      //
+      // output:
+      //  - an aggregated value, e.g. a comma-separated list
+      return values.join(', ')
+    }
+  ")
+)
+```
+
+Multiple groups
+
+```{r}
+data_states <- data.frame(
+  State = state.name,
+  Region = state.region,
+  Division = state.division,
+  Area = state.area
+)
+
+reactable(
+  data_states,
+  groupBy = c("Region", "Division"),
+  columns = list(
+    Division = colDef(aggregate = "unique"),
+    Area = colDef(aggregate = "sum", format = colFormat(separators = TRUE))
+  ),
+  bordered = TRUE
+)
+```
+
+Column formatting
+
+You can format data in a column by providing colFormat() options to format:
+
+https://glin.github.io/reactable/articles/examples.html#custom-rendering-1
+
+```{r}
+data_format <- data.frame(
+  price_USD = c(123456.56, 132, 5650.12),
+  price_INR = c(350, 23208.552, 1773156.4),
+  number_FR = c(123456.56, 132, 5650.12),
+  temp = c(22, NA, 31),
+  percent = c(0.9525556, 0.5, 0.112),
+  date = as.Date(c("2019-01-02", "2019-03-15", "2019-09-22"))
+)
+
+reactable(data_format, columns = list(
+  price_USD = colDef(format = colFormat(prefix = "$", separators = TRUE, digits = 2)),
+  price_INR = colDef(format = colFormat(currency = "INR", separators = TRUE, locales = "hi-IN")),
+  temp = colDef(format = colFormat(suffix = " °C")),
+  percent = colDef(format = colFormat(percent = TRUE, digits = 1)),
+  date = colDef(format = colFormat(date = TRUE, locales = "en-GB"))
+))
+```
+
+Format aggregated cells:
+
+```{r}
+data_states <- data.frame(
+  States = state.name,
+  Region = state.region,
+  Area = state.area
+)
+
+reactable(data_states, groupBy = "Region", columns = list(
+  States = colDef(
+    aggregate = "count",
+    format = list(
+      aggregated = colFormat(suffix = " states")
+    )
+  ),
+  Area = colDef(
+    aggregate = "sum",
+    format = colFormat(suffix = " mi²", separators = TRUE)
+  )
+))
+```
+
+#### Custom rendering
+
+You can customize how data is displayed using an R or JavaScript function that returns custom content. R render functions support Shiny HTML tags (or htmltools) and htmlwidgets, while JavaScript render functions allow for more dynamic behavior.
+
+You can also render content as HTML using colDef(html = TRUE). Note that all raw HTML is escaped by default.
+
+See Custom Rendering for details on how to use render functions, and the Demo Cookbook for even more examples of custom rendering
+
+Embedding HTML widgets
+
+Using sparkline
+
+```{r}
+#install.packages("sparkline")
+data_chick <- chickwts %>% 
+  group_by(feed) %>%
+  summarise(weight = list(weight)) %>% 
+  mutate(boxplot = NA, sparkline = NA)
+
+reactable(data_chick, columns = list(
+  weight = colDef(cell = function(values) {
+    sparkline(values, type = "bar", chartRangeMin = 0, chartRangeMax = max(chickwts$weight))
+  }),
+  boxplot = colDef(cell = function(value, index) {
+    sparkline(data_chick$weight[[index]], type = "box")
+  }),
+  sparkline = colDef(cell = function(value, index) {
+    sparkline(data_chick$weight[[index]])
+  })
+))
+```
+
+Try with excess death data
+
+```{r, fig.width=12}
+# select countries with regional breakdown
+data_country_region <- data %>%
+  select(country, region, start_date, total_deaths, expected_deaths, excess_deaths) %>%
+  filter(country %in% c("United States", "Britain", "Italy", "France", "Chile", "Ecuador")) %>%
+  mutate(
+    dev_from_expected = (total_deaths - expected_deaths) / expected_deaths # calculates the deviation from the expected deaths, %
+  )
+
+reactable(
+  data_country_region,
+  groupBy = c("country"),
+  columns = list(
+    region = colDef(aggregate = "unique"),
+    total_deaths = colDef(aggregate = "sum", format = colFormat(separators = TRUE)),
+    expected_deaths = colDef(aggregate = "sum", format = colFormat(separators = TRUE)),
+    excess_deaths = colDef(aggregate = "sum", format = colFormat(separators = TRUE)),
+    dev_from_expected = colDef(aggregate = "max", format = colFormat(percent = TRUE, digits = 1))
+  ),
+  bordered = TRUE
+)
+```
+
+Need to remove countries from regions
+
+```{r}
+data_country_region <- data_country_region %>%
+  filter(region != country & region != "England and Wales") 
+
+reactable(
+  data_country_region,
+  groupBy = c("country"),
+  columns = list(
+    region = colDef(aggregate = "unique"),
+    total_deaths = colDef(aggregate = "sum", format = colFormat(separators = TRUE)),
+    expected_deaths = colDef(aggregate = "sum", format = colFormat(separators = TRUE)),
+    excess_deaths = colDef(aggregate = "sum", format = colFormat(separators = TRUE)),
+    dev_from_expected = colDef(aggregate = "max", format = colFormat(percent = TRUE, digits = 1))
+  ),
+  bordered = TRUE
+)
+  
+```
+
+
+
+```{r, eval=FALSE}
+data %>%
+  filter(country %in% good_countries_2 & country == region) %>%
+  group_by(country) %>% 
+  mutate(csum = cumsum(covid_deaths)) %>%
+  filter(country =="Britain") %>%
+  ungroup() %>%
+  filter(csum >50) %>%
+  group_by(country) %>%
+  summarise(start_date = min(start_date),
+            end_date = max(end_date))
+```
+
+
+
